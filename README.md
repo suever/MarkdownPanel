@@ -1,5 +1,5 @@
 # MarkdownPanel
-Control which displays markdown as HTML within a MATLAB control.
+Control which displays markdown as HTML within a MATLAB control
  
 ------
 This control utilizes the [Showdown javascript library][1] to convert
@@ -35,10 +35,22 @@ automatically create a multi-line entry
               to manipulate the appearance of the control
  
 ------
+**Demo**
+ 
+A demo application has been bundled with this code to show how to use
+some of the features. To run this demo, simply type the following
+into the MATLAB console.
+ 
+    MarkdownPanel.demo()
+ 
+------
 **Attribution**
  
 Copyright (c) <2016> [Jonathan Suever][2].  
 All rights reserved
  
+This software is licensed under the [BSD license][3]
+ 
 [1]: https://github.com/showdownjs/showdown
 [2]: https://github.com/suever
+[3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE

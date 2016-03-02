@@ -36,13 +36,25 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     %               to manipulate the appearance of the control
     %
     % ------
+    % **Demo**
+    %
+    % A demo application has been bundled with this code to show how to use
+    % some of the features. To run this demo, simply type the following
+    % into the MATLAB console.
+    %
+    %     MarkdownPanel.demo()
+    %
+    % ------
     % **Attribution**
     %
     % Copyright (c) <2016> [Jonathan Suever][2].
     % All rights reserved
     %
+    % This software is licensed under the [BSD license][3]
+    %
     % [1]: https://github.com/showdownjs/showdown
     % [2]: https://github.com/suever
+    % [3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE
 
     properties
         Content     = '' % Markdown content to be displayed
