@@ -61,7 +61,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
         StyleSheets = {} % List of stylesheets to link in
     end
 
-    properties %(Access = 'protected')
+    properties (Access = 'protected')
         browser         % Handle to the javahandle_withcallbacks
         container       % Graphics handle to the HTMLBrowserPanel
         jbrowser        % Java Handle to the HTMLBrowserPanel
@@ -86,7 +86,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             %
             % OUTPUTS:
             %   panel:  Graphics Object, The graphics handle that can be
-            %   used to manipulate the appearance of the control.
+            %           used to manipulate the appearance of the control.
 
             % Create an instance of the internal HTMLBrowserPanel
 
@@ -128,6 +128,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             set(self, varargin{:})
             self.refresh(true);
         end
+
         function delete(self)
             % delete - Delete the MarkdownPanel and associated objects
             %
@@ -143,12 +144,18 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % refresh - Force a refresh of the displayed markdown
             %
             % USAGE:
-            %     panel.refresh()
+            %     panel.refresh(force)
+            %
+            % INPUTS:
+            %   force:  Logical, Indicates whether to completely redraw the
+            %           page (including HTML) (true) or not (false). The
+            %           default is to simply execute javascript on the
+            %           existing page.
 
             if iscell(self.Content)
                 content = sprintf('%s\\n\\n', self.Content{:});
                 % Remove trailing newlines
-                content(end-3:end) = '';
+                content = regexprep(content, '\n*$', '');
             else
                 content = self.Content;
             end
@@ -160,9 +167,9 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % external
             jscript = [...
                 'try {', ...
-                  'html = conv.makeHtml("', content, '");', ...
+                  'var html = conv.makeHtml("', content, '");', ...
                   'document.getElementById("display").innerHTML = html;', ...
-                  'links = document.querySelectorAll("a");', ...
+                  'var links = document.querySelectorAll("a");', ...
                   'for (var k in links) { links[k].target = "_blank";}', ...
                 '} catch (err) { ', ...
                   'document.getElementById("display").innerHTML = err.message;', ...
@@ -177,6 +184,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                 curdir = fileparts(mfilename('fullpath'));
                 showdownjs = fullfile(curdir, 'showdown.min.js');
 
+                % Attempt to protect the user in case they deleted showdown
                 if ~exist(showdownjs, 'file')
                     % Then go download it
                     url = 'https://cdn.rawgit.com/showdownjs/showdown/1.3.0/dist/showdown.min.js';
@@ -206,8 +214,6 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                         '<script>', ...
                           'try {', ...
                             showdown(:)', ...
-                            'var html;', ...
-                            'var links;', ...
                             'var conv = new showdown.Converter();', ...
                           '} catch (err) {', ...
                             'document.getElementById("display").innerHTML = err.message;', ...
