@@ -306,6 +306,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                 'Name',         'MarkdownPanel Demo');
 
             movegui(fig, 'center');
+            drawnow;
 
             % Create two side-by-side panels
             flow = uiflowcontainer('v0', 'FlowDirection', 'lefttoright');
