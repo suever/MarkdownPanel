@@ -90,7 +90,6 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             %           used to manipulate the appearance of the control.
 
             % Create an instance of the internal HTMLBrowserPanel
-
             import com.mathworks.mlwidgets.html.*;
 
             % For pre-HG2 browsers, specify the default to be HTMLPANEL
@@ -98,9 +97,22 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                 HtmlComponentFactory.setDefaultType('HTMLPANEL');
             end
 
+            % Use inputParser so we can handle structs AND params
+            ip = inputParser();
+            ip.KeepUnmatched = true;
+            ip.addParamValue('Parent', [], @ishghandle);
+            ip.parse(varargin{:});
+
+            if ~isempty(ip.Results.Parent)
+                parent = ip.Results.Parent;
+            else
+                parent = gcf;
+            end
+
             % Create the Java browser component
             self.jbrowser = HTMLBrowserPanel();
-            [self.browser, self.container] = javacomponent(self.jbrowser, [0 0 1 1]);
+            [self.browser, self.container] = javacomponent(self.jbrowser, ...
+                [0 0 1 1], parent);
             self.htmlComponent = self.jbrowser.getHtmlComponent();
 
             % By default, make it take up the entire parent
@@ -127,6 +139,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
 
             % Finally consider all input arguments
             set(self, varargin{:})
+
             self.refresh(true);
         end
 
