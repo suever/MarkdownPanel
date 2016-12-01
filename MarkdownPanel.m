@@ -201,6 +201,10 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % Replace "true" newlines with "\n"
             content = regexprep(content, '\n', '\\n');
 
+            % Make sure that we properly escape double quotes so that the
+            % created javascript is valid
+            content = regexprep(content, '"', '\\"');
+
             % Javascript to run to update the HTML and make all hyperlinks
             % external
             jscript = [...
