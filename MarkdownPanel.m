@@ -173,6 +173,9 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             if ishghandle(self.container)
                 delete(self.container)
             end
+
+            % Make sure that we dispose of the html component
+            self.htmlComponent.dispose();
         end
 
         function refresh(self, force)
