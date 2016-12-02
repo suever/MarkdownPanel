@@ -1,3 +1,6 @@
+[![MATLAB FEX](https://img.shields.io/badge/MATLAB%20FEX-60536-green.svg)][fex]
+[![Minimum Version](https://img.shields.io/badge/Requires-R2014a-blue.svg)][matlab]
+
 # MarkdownPanel
 Control which displays markdown as HTML within a MATLAB control
  
@@ -73,4 +76,6 @@ This software is licensed under the [BSD license][3]
 [2]: https://github.com/suever
 [3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE
 [4]: https://cdn.rawgit.com/suever/MarkdownPanel/master/MarkdownPanel.png
+[fex]: https://www.mathworks.com/matlabcentral/fileexchange/60536-markdownpanel
+[matlab]: http://www.mathworks.com/products/matlab/
 
