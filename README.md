@@ -6,18 +6,18 @@ Control which displays markdown as HTML within a MATLAB control
  
 ------
 This control utilizes the [Showdown javascript library][1] to convert
-markdown into HTML and then uses MATLAB's own `HTMLBrowserPanel` to
-display this HTML.
+markdown into HTML and then uses MATLAB's own `uihtml` component to
+display the resulting HTML.
  
 It behaves like any other graphics object within MATLAB in that all
 properties can either be set upon object construction
  
-    h = MarkdownPanel('Parent', figure, 'Content', '# Hello World!');
+    h = MarkdownPanel('Parent', uifigure(), 'Content', '# Hello World!');
  
 Or after object creation using the returned handle
  
     h = MarkdownPanel();
-    h.Parent = gcf;
+    h.Parent = uifigure();
     set(h, 'Position', [0, 0, 0.5, 0.5])
  
 To set the actual Markdown content, use the `Content` property. You
@@ -67,7 +67,7 @@ into the MATLAB console.
 ------
 **Attribution**
  
-Copyright (c) <2016> [Jonathan Suever][2].  
+Copyright (c) <2024> [Jonathan Suever][2].  
 All rights reserved
  
 This software is licensed under the [BSD license][3]
