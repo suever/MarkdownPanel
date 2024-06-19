@@ -319,7 +319,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             if ischar(val); val = {val}; end
 
             for k = 1:numel(val)
-              if startsWith(val{k}, 'http')
+              if startsWith(val{k}, 'http://') || startsWith(val{k}, 'https://') || startsWith(val{k}, 'file://')
                 if ~self.stylesheetCache.isKey(val{k})
                   % Download CSS files that are not cached
                   try
