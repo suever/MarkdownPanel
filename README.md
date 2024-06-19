@@ -1,5 +1,5 @@
 [![MATLAB FEX](https://img.shields.io/badge/MATLAB%20FEX-60536-green.svg)][fex]
-[![Minimum Version](https://img.shields.io/badge/Requires-R2014a-blue.svg)][matlab]
+[![Minimum Version](https://img.shields.io/badge/Requires-R2019b-blue.svg)][matlab]
 
 # MarkdownPanel
 Control which displays markdown as HTML within a MATLAB control
