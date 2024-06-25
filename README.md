@@ -74,8 +74,8 @@ This software is licensed under the [BSD license][3]
  
 [1]: https://github.com/showdownjs/showdown
 [2]: https://github.com/suever
-[3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE
-[4]: https://cdn.rawgit.com/suever/MarkdownPanel/master/MarkdownPanel.png
+[3]: https://github.com/suever/MarkdownPanel/blob/main/LICENSE
+[4]: https://cdn.rawgit.com/suever/MarkdownPanel/main/MarkdownPanel.png
 [fex]: https://www.mathworks.com/matlabcentral/fileexchange/60536-markdownpanel
 [matlab]: http://www.mathworks.com/products/matlab/
 
