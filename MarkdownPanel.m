@@ -4,18 +4,18 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     %
     % ------
     % This control utilizes the [Showdown javascript library][1] to convert
-    % markdown into HTML and then uses MATLAB's own `uihtml` component to
-    % display the resulting HTML.
+    % markdown into HTML and then uses MATLAB's internal HTML components to
+    % display this HTML.
     %
     % It behaves like any other graphics object within MATLAB in that all
     % properties can either be set upon object construction
     %
-    %     h = MarkdownPanel('Parent', uifigure(), 'Content', '# Hello World!');
+    %     h = MarkdownPanel('Parent', figure, 'Content', '# Hello World!');
     %
     % Or after object creation using the returned handle
     %
     %     h = MarkdownPanel();
-    %     h.Parent = uifigure();
+    %     h.Parent = gcf;
     %     set(h, 'Position', [0, 0, 0.5, 0.5])
     %
     % To set the actual Markdown content, use the `Content` property. You
@@ -63,7 +63,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     % ------
     % **Attribution**
     %
-    % Copyright (c) <2024> [Jonathan Suever][2].
+    % Copyright (c) <2016> [Jonathan Suever][2].
     % All rights reserved
     %
     % This software is licensed under the [BSD license][3]
@@ -73,18 +73,20 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     % [3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE
 
     properties
-        Content          = ''        % Markdown content to be displayed
-        StyleSheets      = {}        % List of stylesheets to link in
-        Classes          = {}        % CSS classes applied to the primary div
-        Options          = struct()  % Options to pass to showdown
-        EnableImages     = false     % Whether to allow embedding images or not
-        WorkingDirectory = ''        % Directory corresponding to the root for all image references
-        browser                      % Graphics Handle to the uihtml component
+        Content            = ''        % Markdown content to be displayed
+        StyleSheets        = {}        % List of stylesheets to link in
+        Classes            = {}        % CSS classes applied to the primary div
+        Options            = struct()  % Options to pass to showdown
+        TemporaryDirectory = tempdir() % Directory in which we store the HTML to render
     end
 
     properties (Access = 'protected')
-        listener        % Listener for when the uihtml element is deleted
-        stylesheetCache = containers.Map('KeyType', 'char', 'ValueType', 'char') % Cache of downloaded stylesheets
+        contentFilename   = ''  % Filename of the temporary HTML file
+        browser                 % Handle to the javahandle_withcallbacks
+        container               % Graphics handle to the HTML panel
+        jbrowser                % Java Handle to the underlying java object
+        listener                % Listener for when the jbrowser is deleted
+        htmlComponent           % Java handle to embedded HTML component
     end
 
     methods
@@ -115,18 +117,34 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             if ~isempty(ip.Results.Parent)
                 parent = ip.Results.Parent;
             else
-                parent = uifigure();
+                parent = gcf;
             end
 
-            % Create the Java browser component
-            self.browser = uihtml(parent, 'Position', [0 0 1 1]);
+            % Create the HTML panel in a version-specific way
+            if verLessThan('matlab', '9.6')
+              % For pre-HG2 browsers, specify the default to be HTMLPANEL
+              if verLessThan('matlab', '8.4')
+                HtmlComponentFactory.setDefaultType('HTMLPANEL');
+              end
+
+              self.jbrowser = javaObjectEDT(com.mathworks.mlwidgets.html.HTMLBrowserPanel);
+              self.htmlComponent = self.jbrowser.getHtmlComponent();
+            else
+              self.jbrowser = javaObjectEDT(com.mathworks.mlwidgets.help.LightweightHelpPanel);
+              self.htmlComponent = self.jbrowser.getLightweightBrowser();
+            end
+
+            originalWarnings = warning;
+            warning('off', 'MATLAB:ui:javacomponent:FunctionToBeRemoved');
+            [self.browser, self.container] = javacomponent(self.jbrowser, [], parent);
+            warning(originalWarnings);
 
             % By default, make it take up the entire parent
-            set(self.browser, 'position', [0 0 1 1])
+            set(self.container, 'Units', 'norm', 'position', [0 0 1 1])
 
             % Now make this look like the container object by creating
             % shadow properties that interact with the underlying object
-            props = fieldnames(get(self.browser));
+            props = fieldnames(get(self.container));
 
             for k = 1:numel(props)
                 % Ignore if the property is already defined
@@ -140,7 +158,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             end
 
             % If the underlying graphics object is deleted, follow suit
-            self.listener = addlistener(self.browser, ...
+            self.listener = addlistener(self.container, ...
                 'ObjectBeingDestroyed', @(s,e)delete(self));
 
             % Setup the default options
@@ -150,7 +168,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % Finally consider all input arguments
             set(self, varargin{:})
 
-            self.refresh();
+            self.refresh(true);
         end
 
         function delete(self)
@@ -159,16 +177,25 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % USAGE:
             %   panel.delete()
 
-            if ishghandle(self.browser)
-                delete(self.browser)
+            if ishghandle(self.container)
+                delete(self.container)
             end
+
+            % Make sure that we dispose of the html component
+            self.htmlComponent.dispose();
         end
 
-        function refresh(self)
+        function refresh(self, force)
             % refresh - Force a refresh of the displayed markdown
             %
             % USAGE:
-            %     panel.refresh()
+            %     panel.refresh(force)
+            %
+            % INPUTS:
+            %   force:  Logical, Indicates whether to completely redraw the
+            %           page (including HTML) (true) or not (false). The
+            %           default is to simply execute javascript on the
+            %           existing page.
 
             if iscell(self.Content)
                 content = sprintf('%s\\n\\n', self.Content{:});
@@ -197,102 +224,110 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                         ' links[k].target = "_blank";', ...
                   '}', ...
                 '} catch (err) { ', ...
-                  'alert(err.message);', ...
-                '}'];
+                  'error.innerHTML = err.message;', ...
+                '};'];
 
-            % Load showdown from file that way we can catch any import
-            % issues and display them in the HTML
-            curdir = fileparts(mfilename('fullpath'));
-            showdownjs = fullfile(curdir, 'showdown.min.js');
+            % Initial load with entire javascript
+            if isempty(getappdata(self.container, 'initialized')) || (exist('force', 'var') && force)
+                % Load showdown from file that way we can catch any import
+                % issues and display them in the HTML
+                curdir = fileparts(mfilename('fullpath'));
+                showdownjs = fullfile(curdir, 'showdown.min.js');
 
-            % Attempt to protect the user in case they deleted showdown
-            if ~exist(showdownjs, 'file')
-                % Then go download it
-                url = 'https://cdn.rawgit.com/showdownjs/showdown/2.1.0/dist/showdown.min.js';
-                urlwrite(url, showdownjs);
-            end
-
-            fid = fopen(showdownjs, 'rb');
-            showdown = fread(fid, '*char');
-            fclose(fid);
-
-            % Create stylesheet entries
-            stylesheetSources = '';
-            stylesheetLinks = '';
-
-            for k = 1:numel(self.StyleSheets)
-                if self.stylesheetCache.isKey(self.StyleSheets{k})
-                  stylesheetSources = strcat(stylesheetSources, '\n', self.stylesheetCache(self.StyleSheets{k}));
-                else
-                  format = '<link rel="stylesheet" href="%s">\n';
-                  stylesheetLinks = strcat(stylesheetLinks, sprintf(format, self.StyleSheets{k}));
-                end
-            end
-
-            % Create the options that we want to pass to the converter
-            options = self.Options;
-            fields = fieldnames(options);
-
-            opts = '';
-
-            for k = 1:numel(fields)
-                value = options.(fields{k});
-
-                if ischar(value)
-                    value = cat(2, '"', value, '"');
-                else
-                    value = num2str(value);
+                % Attempt to protect the user in case they deleted showdown
+                if ~exist(showdownjs, 'file')
+                    % Then go download it
+                    url = 'https://cdn.rawgit.com/showdownjs/showdown/1.3.0/dist/showdown.min.js';
+                    urlwrite(url, showdownjs);
                 end
 
-                newopt = ['conv.setOption("', fields{k}, '", ', value, ');'];
-                opts = cat(2, opts, newopt);
+                fid = fopen(showdownjs, 'rb');
+                showdown = fread(fid, '*char');
+                fclose(fid);
+
+                % Create stylesheet entries
+                if numel(self.StyleSheets)
+                    format = '<link rel="stylesheet" href="%s">\n';
+                    stylesheets = sprintf(format, self.StyleSheets{:});
+                else
+                    stylesheets = '';
+                end
+
+                % Create the options that we want to pass to the converter
+                options = self.Options;
+                fields = fieldnames(options);
+
+                opts = '';
+
+                for k = 1:numel(fields)
+                    value = options.(fields{k});
+
+                    if ischar(value)
+                        value = cat(2, '"', value, '"');
+                    else
+                        value = num2str(value);
+                    end
+
+                    newopt = ['conv.setOption("', fields{k}, '", ', value, ');'];
+                    opts = cat(2, opts, newopt);
+                end
+
+                html = {...
+                    '<!DOCTYPE html>', ....
+                      '<head>', ...
+                        '<meta http-equiv="X-UA-Compatible" content="IE=edge">', ...
+                         stylesheets, ...
+                         '<script>', ...
+                           'if (window.console) {', ...
+                             'var console = window.console;', ...
+                           '}', ...
+                         '</script>', ...
+                      '</head>', ...
+                      '<body>', ...
+                        '<div class="', sprintf('%s ', self.Classes{:}), '">', ...
+                          '<div id="error" class="error" style="color:#F00"></div>', ...
+                          '<div id="display">Loading...</div>', ...
+                        '</div>', ...
+                        '<script>', ...
+                          'var display = document.getElementById("display");', ...
+                          'var error = document.getElementById("error");', ...
+                          'try {', ...
+                            showdown(:)', ...
+                            'var conv = new showdown.Converter();', ...
+                            opts, ...
+                          '} catch (err) {', ...
+                            'error.innerHTML = err.message;', ...
+                            'display.innerHTML = "";', ...
+                          '}', ...
+                        '</script>', ...
+                      '</body>', ...
+                    '</html>'};
+                html = sprintf('%s\n', html{:});
+
+                % Older versions of MATLAB allow us to specify HTML directly whereas newer versions require us to
+                % provide an HTML file path to be loaded
+                if self.useInlineHTML()
+                  self.htmlComponent.setHtmlText(html);
+                else
+                  if isempty(self.contentFilename)
+                    self.contentFilename = fullfile(self.TemporaryDirectory, sprintf('%s.html', java.util.UUID.randomUUID));
+                    if ~exist(self.TemporaryDirectory, 'dir')
+                      mkdir(self.TemporaryDirectory);
+                    end
+                  end
+
+                  fid = fopen(self.contentFilename, 'w');
+                  fprintf(fid, '%s', html);
+                  fclose(fid);
+
+                  self.htmlComponent.load(sprintf('file://%s', self.contentFilename));
+                end
+
+                setappdata(self.container, 'initialized', true);
             end
 
-            html = {...
-                '<!DOCTYPE html>', ....
-                  '<head>', ...
-                    '<meta http-equiv="X-UA-Compatible" content="IE=edge">', ...
-                    '<style>', stylesheetSources, '</style>', ...
-                     stylesheetLinks, ...
-                     '<script>', ...
-                       'if (window.console) {', ...
-                         'var console = window.console;', ...
-                       '}', ...
-                     '</script>', ...
-                  '</head>', ...
-                  '<body>', ...
-                    '<div class="', sprintf('%s ', self.Classes{:}), '">', ...
-                      '<div id="error" class="error" style="color:#F00"></div>', ...
-                      '<div id="display">Loading...</div>', ...
-                    '</div>', ...
-                    '<script>', ...
-                      'var display = document.getElementById("display");', ...
-                      'var error = document.getElementById("error");', ...
-                      'try {', ...
-                        showdown(:)', ...
-                        'var conv = new showdown.Converter();', ...
-                        opts, ...
-                      '} catch (err) {', ...
-                        'error.innerHTML = err.message;', ...
-                        'display.innerHTML = "";', ...
-                      '}', ...
-                      jscript, ...
-                    '</script>', ...
-                  '</body>', ...
-                '</html>'};
-            html = sprintf('%s\n', html{:});
-
-            % In order to use images, an external HTML source must be used for the HTMLSource. This results in a flicker
-            % and reset of the viewport when content changes which is why it's disabled by default.
-            if self.EnableImages
-              htmlFile = fullfile(self.WorkingDirectory, '.mp.html');
-              writelines(html, htmlFile);
-              self.browser.HTMLSource = '';
-              drawnow();
-              self.browser.HTMLSource = htmlFile;
-            else
-              self.browser.HTMLSource = html;
-            end
+            % Convert the markdown to HTML and render it
+            self.htmlComponent.executeScript(jscript);
         end
     end
 
@@ -312,30 +347,22 @@ classdef MarkdownPanel < hgsetget & dynamicprops
 
             self.Options = val;
 
-            self.refresh();
+            % Force a complete refresh
+            self.refresh(true);
         end
 
         function set.StyleSheets(self, val)
             if ischar(val); val = {val}; end
 
-            for k = 1:numel(val)
-              if startsWith(val{k}, 'http://') || startsWith(val{k}, 'https://') || startsWith(val{k}, 'file://')
-                if ~self.stylesheetCache.isKey(val{k})
-                  % Download CSS files that are not cached
-                  try
-                    self.stylesheetCache(val{k}) = urlread(val{k});
-                  catch
-                    warning('MarkdownPanel:DownloadError', ...
-                      'Unable to download %s', val{k});
-                  end
-                end
-              end
-            end
-
             self.StyleSheets = val;
 
             % Do a hard-refresh of the page
-            self.refresh();
+            self.refresh(true);
+        end
+
+        function set.TemporaryDirectory(self, val)
+            w = what(val);
+            self.TemporaryDirectory = w.path;
         end
 
         function set.Classes(self, val)
@@ -343,7 +370,8 @@ classdef MarkdownPanel < hgsetget & dynamicprops
 
             self.Classes = val;
 
-            self.refresh();
+            % Do a hard-refresh of the page
+            self.refresh(true);
         end
     end
 
@@ -352,12 +380,17 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     methods (Access = 'protected')
         function setwrapper(self, prop, value)
             % Relays "set" events to the underlying container object
-            set(self.browser, prop.Name, value)
+            set(self.container, prop.Name, value)
         end
 
         function res = getwrapper(self, prop)
             % Relays "get" events to the underlying container object
-            res = get(self.browser, prop.Name);
+            res = get(self.container, prop.Name);
+        end
+
+        function res = useInlineHTML(self)
+            % HTML to be specified inline
+            res = ismethod(self.htmlComponent, 'setHtmlText');
         end
     end
 
@@ -376,7 +409,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % USAGE:
             %   panel = MarkdownPanel.demo()
 
-            fig = uifigure( ...
+            fig = figure( ...
                 'Position',     [0 0 1200, 700], ...
                 'Toolbar',      'none', ...
                 'menubar',      'none', ...
@@ -387,34 +420,54 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             drawnow;
 
             % Create two side-by-side panels
-            grid = uigridlayout(fig, [1, 2]);
+            flow = uiflowcontainer('v0', 'FlowDirection', 'lefttoright');
 
             % Grab the help section and do a little cleanup
             h = help(mfilename('fullpath'));
             h = regexprep(h, '^\s*', '');
             h = regexprep(h, '\n  ', '\n');
 
-            editor = uitextarea(grid, ...
-                'Value',        h, ...
-                'Editable',     true, ...
-                'FontSize',     12, ...
-                'BackgroundColor', [1 1 1], ...
-                'Parent',       grid, ...
-                'Position',     [0 0 0.5 1]);
+            % Create a java control because the builtin editbox doesn't
+            % easily return the current value
+            je = javax.swing.JEditorPane('text', h);
+            jp = javax.swing.JScrollPane(je);
+
+            originalWarnings = warning();
+            warning('off', 'MATLAB:ui:javacomponent:FunctionToBeRemoved');
+            [~, hcomp] = javacomponent(jp, [], flow);
+            set(hcomp, 'Position', [0 0 0.5 1])
+            warning(originalWarnings);
 
             % Construct the MarkdownPanel object
-            bootstrap = 'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css';
+            twitter = 'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css';
             panel = MarkdownPanel( ...
                 'Content',      h, ...
-                'Parent',       grid, ...
-                'StyleSheets',  bootstrap, ...
+                'Parent',       flow, ...
+                'StyleSheets',  twitter, ...
                 'Classes',      'container');
 
             % Set the option to enable smooth live previews
             panel.Options.smoothLivePreview = true;
 
-            set(editor, 'ValueChangedFcn', @(s,e)set(panel, 'Content', strjoin(s.Value, '\n')))
-            set(editor, 'ValueChangingFcn', @(s,e)set(panel, 'Content', strjoin(e.Value, '\n')))
+            % Setup a timer to refresh the MarkdownPanel periodically
+            timerFcn = @(s,e)set(panel, 'Content', char(je.getText()));
+            htimer = timer( ...
+                'Period',        1, ...
+                'BusyMode',      'drop', ...
+                'TimerFcn',      timerFcn, ...
+                'ExecutionMode', 'fixedRate');
+
+            % Destroy the timer when the panel is destroyed
+            function stopAndDeleteTimer()
+                stop(htimer);
+                delete(htimer);
+            end
+
+            L = addlistener(panel, 'ObjectBeingDestroyed', @(s,e)stopAndDeleteTimer());
+            setappdata(fig, 'Timer', L);
+
+            % Start the refresh timer
+            start(htimer)
         end
     end
 end
