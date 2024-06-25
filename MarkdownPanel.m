@@ -4,7 +4,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     %
     % ------
     % This control utilizes the [Showdown javascript library][1] to convert
-    % markdown into HTML and then uses MATLAB's own `HTMLBrowserPanel` to
+    % markdown into HTML and then uses MATLAB's internal HTML components to
     % display this HTML.
     %
     % It behaves like any other graphics object within MATLAB in that all
@@ -73,18 +73,20 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     % [3]: https://github.com/suever/MarkdownPanel/blob/master/LICENSE
 
     properties
-        Content     = ''        % Markdown content to be displayed
-        StyleSheets = {}        % List of stylesheets to link in
-        Classes     = {}        % CSS classes applied to the primary div
-        Options     = struct()  % Options to pass to showdown
+        Content            = ''        % Markdown content to be displayed
+        StyleSheets        = {}        % List of stylesheets to link in
+        Classes            = {}        % CSS classes applied to the primary div
+        Options            = struct()  % Options to pass to showdown
+        TemporaryDirectory = tempdir() % Directory in which we store the HTML to render
     end
 
     properties (Access = 'protected')
-        browser         % Handle to the javahandle_withcallbacks
-        container       % Graphics handle to the HTMLBrowserPanel
-        jbrowser        % Java Handle to the HTMLBrowserPanel
-        listener        % Listener for when the jbrowser is deleted
-        htmlComponent   % Java handle to embedded HTML component
+        contentFilename   = ''  % Filename of the temporary HTML file
+        browser                 % Handle to the javahandle_withcallbacks
+        container               % Graphics handle to the HTML panel
+        jbrowser                % Java Handle to the underlying java object
+        listener                % Listener for when the jbrowser is deleted
+        htmlComponent           % Java handle to embedded HTML component
     end
 
     methods
@@ -106,14 +108,6 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             %   panel:  Graphics Object, The graphics handle that can be
             %           used to manipulate the appearance of the control.
 
-            % Create an instance of the internal HTMLBrowserPanel
-            import com.mathworks.mlwidgets.html.*;
-
-            % For pre-HG2 browsers, specify the default to be HTMLPANEL
-            if verLessThan('matlab', '8.4')
-                HtmlComponentFactory.setDefaultType('HTMLPANEL');
-            end
-
             % Use inputParser so we can handle structs AND params
             ip = inputParser();
             ip.KeepUnmatched = true;
@@ -126,11 +120,24 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                 parent = gcf;
             end
 
-            % Create the Java browser component
-            self.jbrowser = HTMLBrowserPanel();
-            [self.browser, self.container] = javacomponent(self.jbrowser, ...
-                [0 0 1 1], parent);
-            self.htmlComponent = self.jbrowser.getHtmlComponent();
+            % Create the HTML panel in a version-specific way
+            if verLessThan('matlab', '9.6')
+              % For pre-HG2 browsers, specify the default to be HTMLPANEL
+              if verLessThan('matlab', '8.4')
+                HtmlComponentFactory.setDefaultType('HTMLPANEL');
+              end
+
+              self.jbrowser = javaObjectEDT(com.mathworks.mlwidgets.html.HTMLBrowserPanel);
+              self.htmlComponent = self.jbrowser.getHtmlComponent();
+            else
+              self.jbrowser = javaObjectEDT(com.mathworks.mlwidgets.help.LightweightHelpPanel);
+              self.htmlComponent = self.jbrowser.getLightweightBrowser();
+            end
+
+            originalWarnings = warning;
+            warning('off', 'MATLAB:ui:javacomponent:FunctionToBeRemoved');
+            [self.browser, self.container] = javacomponent(self.jbrowser, [], parent);
+            warning(originalWarnings);
 
             % By default, make it take up the entire parent
             set(self.container, 'Units', 'norm', 'position', [0 0 1 1])
@@ -218,12 +225,10 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                   '}', ...
                 '} catch (err) { ', ...
                   'error.innerHTML = err.message;', ...
-                '}'];
+                '};'];
 
             % Initial load with entire javascript
-            if isempty(self.htmlComponent.getHtmlText()) || ...
-                (exist('force', 'var') && force)
-
+            if isempty(getappdata(self.container, 'initialized')) || (exist('force', 'var') && force)
                 % Load showdown from file that way we can catch any import
                 % issues and display them in the HTML
                 curdir = fileparts(mfilename('fullpath'));
@@ -299,10 +304,29 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                     '</html>'};
                 html = sprintf('%s\n', html{:});
 
-                self.htmlComponent.setHtmlText(html);
+                % Older versions of MATLAB allow us to specify HTML directly whereas newer versions require us to
+                % provide an HTML file path to be loaded
+                if self.useInlineHTML()
+                  self.htmlComponent.setHtmlText(html);
+                else
+                  if isempty(self.contentFilename)
+                    self.contentFilename = fullfile(self.TemporaryDirectory, sprintf('%s.html', java.util.UUID.randomUUID));
+                    if ~exist(self.TemporaryDirectory, 'dir')
+                      mkdir(self.TemporaryDirectory);
+                    end
+                  end
+
+                  fid = fopen(self.contentFilename, 'w');
+                  fprintf(fid, '%s', html);
+                  fclose(fid);
+
+                  self.htmlComponent.load(sprintf('file://%s', self.contentFilename));
+                end
+
+                setappdata(self.container, 'initialized', true);
             end
 
-            % Update the HTMLBrowserPanel to use this HTML
+            % Convert the markdown to HTML and render it
             self.htmlComponent.executeScript(jscript);
         end
     end
@@ -336,6 +360,11 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             self.refresh(true);
         end
 
+        function set.TemporaryDirectory(self, val)
+            w = what(val);
+            self.TemporaryDirectory = w.path;
+        end
+
         function set.Classes(self, val)
             if ischar(val); val = {val}; end
 
@@ -357,6 +386,11 @@ classdef MarkdownPanel < hgsetget & dynamicprops
         function res = getwrapper(self, prop)
             % Relays "get" events to the underlying container object
             res = get(self.container, prop.Name);
+        end
+
+        function res = useInlineHTML(self)
+            % HTML to be specified inline
+            res = ismethod(self.htmlComponent, 'setHtmlText');
         end
     end
 
@@ -397,8 +431,12 @@ classdef MarkdownPanel < hgsetget & dynamicprops
             % easily return the current value
             je = javax.swing.JEditorPane('text', h);
             jp = javax.swing.JScrollPane(je);
+
+            originalWarnings = warning();
+            warning('off', 'MATLAB:ui:javacomponent:FunctionToBeRemoved');
             [~, hcomp] = javacomponent(jp, [], flow);
             set(hcomp, 'Position', [0 0 0.5 1])
+            warning(originalWarnings);
 
             % Construct the MarkdownPanel object
             twitter = 'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css';
@@ -420,8 +458,12 @@ classdef MarkdownPanel < hgsetget & dynamicprops
                 'ExecutionMode', 'fixedRate');
 
             % Destroy the timer when the panel is destroyed
-            callback = @(s,e)delete(htimer);
-            L = addlistener(panel, 'ObjectBeingDestroyed', callback);
+            function stopAndDeleteTimer()
+                stop(htimer);
+                delete(htimer);
+            end
+
+            L = addlistener(panel, 'ObjectBeingDestroyed', @(s,e)stopAndDeleteTimer());
             setappdata(fig, 'Timer', L);
 
             % Start the refresh timer
