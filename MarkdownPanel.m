@@ -63,7 +63,7 @@ classdef MarkdownPanel < hgsetget & dynamicprops
     % ------
     % **Attribution**
     %
-    % Copyright (c) <2016> [Jonathan Suever][2].
+    % Copyright (c) <2024> [Jonathan Suever][2].
     % All rights reserved
     %
     % This software is licensed under the [BSD license][3]
